@@ -19,6 +19,7 @@ import (
 	appsetmetrics "github.com/argoproj/argo-cd/v3/applicationset/metrics"
 	"github.com/argoproj/argo-cd/v3/applicationset/services/mocks"
 	argov1alpha1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/argoproj/argo-cd/v3/util/settings"
 )
 
 func TestRequeueAfter(t *testing.T) {
@@ -56,13 +57,18 @@ func TestRequeueAfter(t *testing.T) {
 		},
 	}
 	fakeDynClient := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), gvrToListKind, duckType)
-	scmConfig := generators.NewSCMConfig("", []string{""}, true, nil, true)
+	scmConfig := generators.NewSCMConfig("", []string{""}, true, true, nil, true)
+	clusterInformer, err := settings.NewClusterInformer(appClientset, "argocd")
+	require.NoError(t, err)
+
+	defer startAndSyncInformer(t, clusterInformer)()
+
 	terminalGenerators := map[string]generators.Generator{
 		"List":                    generators.NewListGenerator(),
-		"Clusters":                generators.NewClusterGenerator(ctx, k8sClient, appClientset, "argocd"),
+		"Clusters":                generators.NewClusterGenerator(k8sClient, "argocd"),
 		"Git":                     generators.NewGitGenerator(mockServer, "namespace"),
 		"SCMProvider":             generators.NewSCMProviderGenerator(fake.NewClientBuilder().WithObjects(&corev1.Secret{}).Build(), scmConfig),
-		"ClusterDecisionResource": generators.NewDuckTypeGenerator(ctx, fakeDynClient, appClientset, "argocd"),
+		"ClusterDecisionResource": generators.NewDuckTypeGenerator(ctx, fakeDynClient, appClientset, "argocd", clusterInformer),
 		"PullRequest":             generators.NewPullRequestGenerator(k8sClient, scmConfig),
 	}
 

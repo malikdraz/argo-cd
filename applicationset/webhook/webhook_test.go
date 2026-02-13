@@ -230,10 +230,10 @@ func TestWebhookHandler(t *testing.T) {
 				fakeAppWithMergeAndNestedGitGenerator("merge-nested-git-github", namespace, "https://github.com/org/repo"),
 			).Build()
 			set := argosettings.NewSettingsManager(t.Context(), fakeClient, namespace)
-			h, err := NewWebhookHandler(namespace, webhookParallelism, set, fc, mockGenerators())
+			h, err := NewWebhookHandler(webhookParallelism, set, fc, mockGenerators())
 			require.NoError(t, err)
 
-			req := httptest.NewRequest(http.MethodPost, "/api/webhook", nil)
+			req := httptest.NewRequest(http.MethodPost, "/api/webhook", http.NoBody)
 			req.Header.Set(test.headerKey, test.headerValue)
 			eventJSON, err := os.ReadFile(filepath.Join("testdata", test.payloadFile))
 			require.NoError(t, err)
@@ -609,7 +609,7 @@ func fakeAppWithMatrixAndNestedGitGenerator(name, namespace, repo string) *v1alp
 							},
 							{
 								Matrix: &apiextensionsv1.JSON{
-									Raw: []byte(fmt.Sprintf(`{
+									Raw: fmt.Appendf(nil, `{
 										"Generators": [
 											{
 												"List": {
@@ -626,7 +626,7 @@ func fakeAppWithMatrixAndNestedGitGenerator(name, namespace, repo string) *v1alp
 												}
 											}
 										]
-									}`, repo)),
+									}`, repo),
 								},
 							},
 						},
@@ -707,7 +707,7 @@ func fakeAppWithMergeAndNestedGitGenerator(name, namespace, repo string) *v1alph
 							},
 							{
 								Merge: &apiextensionsv1.JSON{
-									Raw: []byte(fmt.Sprintf(`{
+									Raw: fmt.Appendf(nil, `{
 										"MergeKeys": ["server"],
 										"Generators": [
 											{
@@ -719,7 +719,7 @@ func fakeAppWithMergeAndNestedGitGenerator(name, namespace, repo string) *v1alph
 												}
 											}
 										]
-									}`, repo)),
+									}`, repo),
 								},
 							},
 						},

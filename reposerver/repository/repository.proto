@@ -286,6 +286,8 @@ message UpdateRevisionForPathsRequest {
 
     bool noRevisionCache = 14;
     string installationID = 15;
+
+    map<string, github.com.argoproj.argo_cd.v3.pkg.apis.application.v1alpha1.RefTarget> syncedRefSources = 16;
 }
 
 message UpdateRevisionForPathsResponse {
@@ -319,6 +321,10 @@ service RepoServerService {
     rpc ListRefs(ListRefsRequest) returns (Refs) {
     }
 
+    // Returns a list of oci tags in the repo
+    rpc ListOCITags(ListRefsRequest) returns (Refs) {
+    }
+
     // ListApps returns a list of apps in the repo
     rpc ListApps(ListAppsRequest) returns (AppList) {
     }
@@ -333,6 +339,10 @@ service RepoServerService {
 
     // Get the meta-data (author, date, tags, message) for a specific revision of the repo
     rpc GetRevisionMetadata(RepoServerRevisionMetadataRequest) returns (github.com.argoproj.argo_cd.v3.pkg.apis.application.v1alpha1.RevisionMetadata) {
+    }
+
+    // Get the meta-data (author, date, tags, message) for a specific revision of the OCI image
+    rpc GetOCIMetadata(RepoServerRevisionChartDetailsRequest) returns (github.com.argoproj.argo_cd.v3.pkg.apis.application.v1alpha1.OCIMetadata) {
     }
     
     // Get the chart details (author, date, tags, message) for a specific revision of the repo

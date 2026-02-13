@@ -33,7 +33,6 @@ var (
 )
 
 type MockMetricsServer struct {
-	registry              *prometheus.Registry
 	redisRequestCounter   *prometheus.CounterVec
 	redisRequestHistogram *prometheus.HistogramVec
 }
@@ -43,7 +42,6 @@ func NewMockMetricsServer() *MockMetricsServer {
 	registry.MustRegister(redisRequestCounter)
 	registry.MustRegister(redisRequestHistogram)
 	return &MockMetricsServer{
-		registry:              registry,
 		redisRequestCounter:   redisRequestCounter,
 		redisRequestHistogram: redisRequestHistogram,
 	}
@@ -135,6 +133,7 @@ func TestRedisMetrics(t *testing.T) {
 	ms := NewMockMetricsServer()
 	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	faultyRedisClient := redis.NewClient(&redis.Options{Addr: "invalidredishost.invalid:12345"})
+
 	CollectMetrics(redisClient, ms, nil)
 	CollectMetrics(faultyRedisClient, ms, nil)
 

@@ -21,7 +21,7 @@ import (
 	"github.com/argoproj/argo-cd/v3/util/argo"
 	"github.com/argoproj/argo-cd/v3/util/errors"
 	"github.com/argoproj/argo-cd/v3/util/grpc"
-	argoio "github.com/argoproj/argo-cd/v3/util/io"
+	utilio "github.com/argoproj/argo-cd/v3/util/io"
 	"github.com/argoproj/argo-cd/v3/util/templates"
 )
 
@@ -80,7 +80,7 @@ func NewApplicationSetGetCommand(clientOpts *argocdclient.ClientOptions) *cobra.
 			}
 			acdClient := headless.NewClientOrDie(clientOpts, c)
 			conn, appIf := acdClient.NewApplicationSetClientOrDie()
-			defer argoio.Close(conn)
+			defer utilio.Close(conn)
 
 			appSetName, appSetNs := argo.ParseFromQualifiedName(args[0], "")
 
@@ -150,7 +150,7 @@ func NewApplicationSetCreateCommand(clientOpts *argocdclient.ClientOptions) *cob
 				}
 
 				conn, appIf := argocdClient.NewApplicationSetClientOrDie()
-				defer argoio.Close(conn)
+				defer utilio.Close(conn)
 
 				// Get app before creating to see if it is being updated or no change
 				existing, err := appIf.Get(ctx, &applicationset.ApplicationSetGetQuery{Name: appset.Name, AppsetNamespace: appset.Namespace})
@@ -241,7 +241,7 @@ func NewApplicationSetGenerateCommand(clientOpts *argocdclient.ClientOptions) *c
 			}
 
 			conn, appIf := argocdClient.NewApplicationSetClientOrDie()
-			defer argoio.Close(conn)
+			defer utilio.Close(conn)
 
 			req := applicationset.ApplicationSetGenerateRequest{
 				ApplicationSet: appset,
@@ -296,7 +296,7 @@ func NewApplicationSetListCommand(clientOpts *argocdclient.ClientOptions) *cobra
 			ctx := c.Context()
 
 			conn, appIf := headless.NewClientOrDie(clientOpts, c).NewApplicationSetClientOrDie()
-			defer argoio.Close(conn)
+			defer utilio.Close(conn)
 			appsets, err := appIf.List(ctx, &applicationset.ApplicationSetListQuery{Selector: selector, Projects: projects, AppsetNamespace: appSetNamespace})
 			errors.CheckError(err)
 
@@ -341,7 +341,7 @@ func NewApplicationSetDeleteCommand(clientOpts *argocdclient.ClientOptions) *cob
 				os.Exit(1)
 			}
 			conn, appIf := headless.NewClientOrDie(clientOpts, c).NewApplicationSetClientOrDie()
-			defer argoio.Close(conn)
+			defer utilio.Close(conn)
 			isTerminal := isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
 			numOfApps := len(args)
 			promptFlag := c.Flag("yes")
@@ -395,12 +395,12 @@ func printApplicationSetNames(apps []arogappsetv1.ApplicationSet) {
 func printApplicationSetTable(apps []arogappsetv1.ApplicationSet, output *string) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	var fmtStr string
-	headers := []any{"NAME", "PROJECT", "SYNCPOLICY", "CONDITIONS"}
+	headers := []any{"NAME", "PROJECT", "SYNCPOLICY", "HEALTH", "CONDITIONS"}
 	if *output == "wide" {
-		fmtStr = "%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
+		fmtStr = "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
 		headers = append(headers, "REPO", "PATH", "TARGET")
 	} else {
-		fmtStr = "%s\t%s\t%s\t%s\n"
+		fmtStr = "%s\t%s\t%s\t%s\t%s\n"
 	}
 	_, _ = fmt.Fprintf(w, fmtStr, headers...)
 	for _, app := range apps {
@@ -414,6 +414,7 @@ func printApplicationSetTable(apps []arogappsetv1.ApplicationSet, output *string
 			app.QualifiedName(),
 			app.Spec.Template.Spec.Project,
 			app.Spec.SyncPolicy,
+			app.Status.Health.Status,
 			conditions,
 		}
 		if *output == "wide" {
@@ -437,6 +438,7 @@ func printAppSetSummaryTable(appSet *arogappsetv1.ApplicationSet) {
 	fmt.Printf(printOpFmtStr, "Project:", appSet.Spec.Template.Spec.GetProject())
 	fmt.Printf(printOpFmtStr, "Server:", getServerForAppSet(appSet))
 	fmt.Printf(printOpFmtStr, "Namespace:", appSet.Spec.Template.Spec.Destination.Namespace)
+	fmt.Printf(printOpFmtStr, "Health Status:", appSet.Status.Health.Status)
 	if !appSet.Spec.Template.Spec.HasMultipleSources() {
 		fmt.Println("Source:")
 	} else {

@@ -4,9 +4,10 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
-	"github.com/argoproj/gitops-engine/pkg/utils/kube"
+	"github.com/argoproj/argo-cd/gitops-engine/pkg/utils/kube"
 	log "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,7 +21,6 @@ import (
 
 	appv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 	applisters "github.com/argoproj/argo-cd/v3/pkg/client/listers/application/v1alpha1"
-	servercache "github.com/argoproj/argo-cd/v3/server/cache"
 	"github.com/argoproj/argo-cd/v3/util/argo"
 	"github.com/argoproj/argo-cd/v3/util/db"
 	"github.com/argoproj/argo-cd/v3/util/rbac"
@@ -32,7 +32,6 @@ import (
 type terminalHandler struct {
 	appLister         applisters.ApplicationLister
 	db                db.ArgoDB
-	cache             *servercache.Cache
 	appResourceTreeFn func(ctx context.Context, app *appv1.Application) (*appv1.ApplicationTree, error)
 	allowedShells     []string
 	namespace         string
@@ -47,11 +46,10 @@ type TerminalOptions struct {
 }
 
 // NewHandler returns a new terminal handler.
-func NewHandler(appLister applisters.ApplicationLister, namespace string, enabledNamespaces []string, db db.ArgoDB, cache *servercache.Cache, appResourceTree AppResourceTreeFn, allowedShells []string, sessionManager *util_session.SessionManager, terminalOptions *TerminalOptions) *terminalHandler {
+func NewHandler(appLister applisters.ApplicationLister, namespace string, enabledNamespaces []string, db db.ArgoDB, appResourceTree AppResourceTreeFn, allowedShells []string, sessionManager *util_session.SessionManager, terminalOptions *TerminalOptions) *terminalHandler {
 	return &terminalHandler{
 		appLister:         appLister,
 		db:                db,
-		cache:             cache,
 		appResourceTreeFn: appResourceTree,
 		allowedShells:     allowedShells,
 		namespace:         namespace,
@@ -243,7 +241,7 @@ func (s *terminalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// load balancers which may close an idle connection after some period of time
 	go session.StartKeepalives(time.Second * 5)
 
-	if isValidShell(s.allowedShells, shell) {
+	if slices.Contains(s.allowedShells, shell) {
 		cmd := []string{shell}
 		err = startProcess(kubeClientset, config, namespace, podName, container, cmd, session)
 	} else {
@@ -339,14 +337,4 @@ func startProcess(k8sClient kubernetes.Interface, cfg *rest.Config, namespace, p
 		TerminalSizeQueue: ptyHandler,
 		Tty:               true,
 	})
-}
-
-// isValidShell checks if the shell is an allowed one
-func isValidShell(validShells []string, shell string) bool {
-	for _, validShell := range validShells {
-		if validShell == shell {
-			return true
-		}
-	}
-	return false
 }

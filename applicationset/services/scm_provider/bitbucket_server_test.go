@@ -350,6 +350,7 @@ func TestGetBranchesMissingDefault(t *testing.T) {
 		assert.Empty(t, r.Header.Get("Authorization"))
 		if r.RequestURI == "/rest/api/1.0/projects/PROJECT/repos/REPO/branches/default" {
 			http.Error(w, "Not found", http.StatusNotFound)
+			return
 		}
 		defaultHandler(t)(w, r)
 	}))
@@ -393,6 +394,7 @@ func TestGetBranchesErrorDefaultBranch(t *testing.T) {
 		assert.Empty(t, r.Header.Get("Authorization"))
 		if r.RequestURI == "/rest/api/1.0/projects/PROJECT/repos/REPO/branches/default" {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
 		}
 		defaultHandler(t)(w, r)
 	}))
@@ -443,7 +445,6 @@ func TestListReposTLS(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				defaultHandler(t)(w, r)
@@ -543,6 +544,7 @@ func TestListReposMissingDefaultBranch(t *testing.T) {
 		assert.Empty(t, r.Header.Get("Authorization"))
 		if r.RequestURI == "/rest/api/1.0/projects/PROJECT/repos/REPO/branches/default" {
 			http.Error(w, "Not found", http.StatusNotFound)
+			return
 		}
 		defaultHandler(t)(w, r)
 	}))
@@ -559,6 +561,7 @@ func TestListReposErrorDefaultBranch(t *testing.T) {
 		assert.Empty(t, r.Header.Get("Authorization"))
 		if r.RequestURI == "/rest/api/1.0/projects/PROJECT/repos/REPO/branches/default" {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
 		}
 		defaultHandler(t)(w, r)
 	}))

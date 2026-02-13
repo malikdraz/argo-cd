@@ -24,7 +24,7 @@ import (
 	argoexec "github.com/argoproj/argo-cd/v3/util/exec"
 	"github.com/argoproj/argo-cd/v3/util/io/files"
 
-	"github.com/argoproj/gitops-engine/pkg/utils/kube"
+	"github.com/argoproj/argo-cd/gitops-engine/pkg/utils/kube"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/mattn/go-zglob"
 	log "github.com/sirupsen/logrus"
@@ -136,7 +136,7 @@ func runCommand(ctx context.Context, command Command, path string, env []string)
 		"stderr":  stderr.String(),
 		"command": command,
 	})
-	if len(output) == 0 {
+	if output == "" {
 		logCtx.Warn("Plugin command returned zero output")
 	} else {
 		// Log stderr even on successful commands to help develop plugins

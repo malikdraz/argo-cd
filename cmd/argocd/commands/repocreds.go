@@ -19,7 +19,7 @@ import (
 	"github.com/argoproj/argo-cd/v3/util/cli"
 	"github.com/argoproj/argo-cd/v3/util/errors"
 	"github.com/argoproj/argo-cd/v3/util/git"
-	"github.com/argoproj/argo-cd/v3/util/io"
+	utilio "github.com/argoproj/argo-cd/v3/util/io"
 	"github.com/argoproj/argo-cd/v3/util/templates"
 )
 
@@ -35,7 +35,7 @@ func NewRepoCredsCommand(clientOpts *argocdclient.ClientOptions) *cobra.Command 
 			# List all the configured repository credentials
 			argocd repocreds list
 
-			# Remove credentials for the repositories with speficied URL
+			# Remove credentials for the repositories with specified URL
 			argocd repocreds rm URL
 		`),
 		Run: func(c *cobra.Command, args []string) {
@@ -72,10 +72,10 @@ func NewRepoCredsAddCommand(clientOpts *argocdclient.ClientOptions) *cobra.Comma
   # Add credentials with SSH private key authentication to use for all repositories under ssh://git@git.example.com/repos
   argocd repocreds add ssh://git@git.example.com/repos/ --ssh-private-key-path ~/.ssh/id_rsa
 
-  # Add credentials with GitHub App authentication to use for all repositories under https://github.com/repos
+  # Add credentials with GitHub App authentication to use for all repositories under https://github.com/repos. github-app-installation-id is optional, if not provided, the installation id will be fetched from the GitHub API.
   argocd repocreds add https://github.com/repos/ --github-app-id 1 --github-app-installation-id 2 --github-app-private-key-path test.private-key.pem
 
-  # Add credentials with GitHub App authentication to use for all repositories under https://ghe.example.com/repos
+  # Add credentials with GitHub App authentication to use for all repositories under https://ghe.example.com/repos. github-app-installation-id is optional, if not provided, the installation id will be fetched from the GitHub API.
   argocd repocreds add https://ghe.example.com/repos/ --github-app-id 1 --github-app-installation-id 2 --github-app-private-key-path test.private-key.pem --github-app-enterprise-base-url https://ghe.example.com/api/v3
 
   # Add credentials with helm oci registry so that these oci registry urls do not need to be added as repos individually.
@@ -159,7 +159,7 @@ func NewRepoCredsAddCommand(clientOpts *argocdclient.ClientOptions) *cobra.Comma
 			}
 
 			conn, repoIf := headless.NewClientOrDie(clientOpts, c).NewRepoCredsClientOrDie()
-			defer io.Close(conn)
+			defer utilio.Close(conn)
 
 			// If the user set a username, but didn't supply password via --password,
 			// then we prompt for it
@@ -189,9 +189,9 @@ func NewRepoCredsAddCommand(clientOpts *argocdclient.ClientOptions) *cobra.Comma
 	command.Flags().StringVar(&repo.BearerToken, "bearer-token", "", "bearer token to the Git repository")
 	command.Flags().StringVar(&sshPrivateKeyPath, "ssh-private-key-path", "", "path to the private ssh key (e.g. ~/.ssh/id_rsa)")
 	command.Flags().StringVar(&tlsClientCertPath, "tls-client-cert-path", "", "path to the TLS client cert (must be PEM format)")
-	command.Flags().StringVar(&tlsClientCertKeyPath, "tls-client-cert-key-path", "", "path to the TLS client cert's key path (must be PEM format)")
+	command.Flags().StringVar(&tlsClientCertKeyPath, "tls-client-cert-key-path", "", "path to the TLS client cert's key (must be PEM format)")
 	command.Flags().Int64Var(&repo.GithubAppId, "github-app-id", 0, "id of the GitHub Application")
-	command.Flags().Int64Var(&repo.GithubAppInstallationId, "github-app-installation-id", 0, "installation id of the GitHub Application")
+	command.Flags().Int64Var(&repo.GithubAppInstallationId, "github-app-installation-id", 0, "installation id of the GitHub Application (optional, will be auto-discovered if not provided)")
 	command.Flags().StringVar(&githubAppPrivateKeyPath, "github-app-private-key-path", "", "private key of the GitHub Application")
 	command.Flags().StringVar(&repo.GitHubAppEnterpriseBaseURL, "github-app-enterprise-base-url", "", "base url to use when using GitHub Enterprise (e.g. https://ghe.example.com/api/v3")
 	command.Flags().BoolVar(&upsert, "upsert", false, "Override an existing repository with the same name even if the spec differs")
@@ -221,7 +221,7 @@ func NewRepoCredsRemoveCommand(clientOpts *argocdclient.ClientOptions) *cobra.Co
 				os.Exit(1)
 			}
 			conn, repoIf := headless.NewClientOrDie(clientOpts, c).NewRepoCredsClientOrDie()
-			defer io.Close(conn)
+			defer utilio.Close(conn)
 
 			promptUtil := utils.NewPrompt(clientOpts.PromptsEnabled)
 
@@ -283,7 +283,7 @@ func NewRepoCredsListCommand(clientOpts *argocdclient.ClientOptions) *cobra.Comm
 			ctx := c.Context()
 
 			conn, repoIf := headless.NewClientOrDie(clientOpts, c).NewRepoCredsClientOrDie()
-			defer io.Close(conn)
+			defer utilio.Close(conn)
 			repos, err := repoIf.ListRepositoryCredentials(ctx, &repocredspkg.RepoCredsQuery{})
 			errors.CheckError(err)
 			switch output {

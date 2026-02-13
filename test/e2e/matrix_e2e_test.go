@@ -24,7 +24,7 @@ func TestListMatrixGenerator(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:       fmt.Sprintf("%s-%s", cluster, name),
 				Namespace:  utils.TestNamespace(),
-				Finalizers: []string{"resources-finalizer.argocd.argoproj.io"},
+				Finalizers: []string{v1alpha1.ResourcesFinalizerName},
 			},
 			Spec: v1alpha1.ApplicationSpec{
 				Project: "default",
@@ -56,9 +56,6 @@ func TestListMatrixGenerator(t *testing.T) {
 		// Create a ClusterGenerator-based ApplicationSet
 		When().
 		Create(v1alpha1.ApplicationSet{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "matrix-generator",
-			},
 			Spec: v1alpha1.ApplicationSetSpec{
 				Template: v1alpha1.ApplicationSetTemplate{
 					ApplicationSetTemplateMeta: v1alpha1.ApplicationSetTemplateMeta{Name: "{{values.name}}-{{path.basename}}"},
@@ -147,7 +144,7 @@ func TestClusterMatrixGenerator(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:       fmt.Sprintf("%s-%s", cluster, name),
 				Namespace:  utils.TestNamespace(),
-				Finalizers: []string{"resources-finalizer.argocd.argoproj.io"},
+				Finalizers: []string{v1alpha1.ResourcesFinalizerName},
 			},
 			Spec: v1alpha1.ApplicationSpec{
 				Project: "default",
@@ -181,9 +178,6 @@ func TestClusterMatrixGenerator(t *testing.T) {
 		CreateClusterSecret("my-secret", "cluster1", "https://kubernetes.default.svc").
 		CreateClusterSecret("my-secret2", "cluster2", "https://kubernetes.default.svc").
 		Create(v1alpha1.ApplicationSet{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "matrix-generator",
-			},
 			Spec: v1alpha1.ApplicationSetSpec{
 				Template: v1alpha1.ApplicationSetTemplate{
 					ApplicationSetTemplateMeta: v1alpha1.ApplicationSetTemplateMeta{Name: "{{name}}-{{path.basename}}"},
@@ -273,7 +267,7 @@ func TestMatrixTerminalMatrixGeneratorSelector(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:       fmt.Sprintf("%s-%s", cluster, name),
 				Namespace:  utils.TestNamespace(),
-				Finalizers: []string{"resources-finalizer.argocd.argoproj.io"},
+				Finalizers: []string{v1alpha1.ResourcesFinalizerName},
 			},
 			Spec: v1alpha1.ApplicationSpec{
 				Project: "default",
@@ -303,9 +297,6 @@ func TestMatrixTerminalMatrixGeneratorSelector(t *testing.T) {
 		// Create ApplicationSet with LabelSelector on an ApplicationSetTerminalGenerator
 		When().
 		Create(v1alpha1.ApplicationSet{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "matrix-generator-nested-matrix",
-			},
 			Spec: v1alpha1.ApplicationSetSpec{
 				Template: v1alpha1.ApplicationSetTemplate{
 					ApplicationSetTemplateMeta: v1alpha1.ApplicationSetTemplateMeta{Name: "{{values.name}}-{{path.basename}}"},
@@ -414,7 +405,7 @@ func TestMatrixTerminalMergeGeneratorSelector(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:       fmt.Sprintf("%s-%s", name, nameSuffix),
 				Namespace:  utils.TestNamespace(),
-				Finalizers: []string{"resources-finalizer.argocd.argoproj.io"},
+				Finalizers: []string{v1alpha1.ResourcesFinalizerName},
 			},
 			Spec: v1alpha1.ApplicationSpec{
 				Project: "default",
@@ -442,9 +433,6 @@ func TestMatrixTerminalMergeGeneratorSelector(t *testing.T) {
 		// Create ApplicationSet with LabelSelector on an ApplicationSetTerminalGenerator
 		When().
 		Create(v1alpha1.ApplicationSet{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "matrix-generator-nested-merge",
-			},
 			Spec: v1alpha1.ApplicationSetSpec{
 				Template: v1alpha1.ApplicationSetTemplate{
 					ApplicationSetTemplateMeta: v1alpha1.ApplicationSetTemplateMeta{Name: "{{path.basename}}-{{name-suffix}}"},

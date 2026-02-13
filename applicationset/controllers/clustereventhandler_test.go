@@ -20,6 +20,15 @@ import (
 	argov1alpha1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 )
 
+type mockAddRateLimitingInterface struct {
+	addedItems []reconcile.Request
+}
+
+// Add checks the type, and adds it to the internal list of received additions
+func (obj *mockAddRateLimitingInterface) Add(item reconcile.Request) {
+	obj.addedItems = append(obj.addedItems, item)
+}
+
 func TestClusterEventHandler(t *testing.T) {
 	scheme := runtime.NewScheme()
 	err := argov1alpha1.AddToScheme(scheme)
@@ -128,7 +137,7 @@ func TestClusterEventHandler(t *testing.T) {
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "my-app-set",
-						Namespace: "another-namespace",
+						Namespace: "argocd",
 					},
 					Spec: argov1alpha1.ApplicationSetSpec{
 						Generators: []argov1alpha1.ApplicationSetGenerator{
@@ -162,8 +171,36 @@ func TestClusterEventHandler(t *testing.T) {
 				},
 			},
 			expectedRequests: []reconcile.Request{
-				{NamespacedName: types.NamespacedName{Namespace: "another-namespace", Name: "my-app-set"}},
+				{NamespacedName: types.NamespacedName{Namespace: "argocd", Name: "my-app-set"}},
 			},
+		},
+		{
+			name: "cluster generators in other namespaces should not match",
+			items: []argov1alpha1.ApplicationSet{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "my-app-set",
+						Namespace: "my-namespace-not-allowed",
+					},
+					Spec: argov1alpha1.ApplicationSetSpec{
+						Generators: []argov1alpha1.ApplicationSetGenerator{
+							{
+								Clusters: &argov1alpha1.ClusterGenerator{},
+							},
+						},
+					},
+				},
+			},
+			secret: corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "argocd",
+					Name:      "my-secret",
+					Labels: map[string]string{
+						argocommon.LabelKeySecretType: argocommon.LabelValueSecretTypeCluster,
+					},
+				},
+			},
+			expectedRequests: []reconcile.Request{},
 		},
 		{
 			name: "non-argo cd secret should not match",
@@ -543,8 +580,9 @@ func TestClusterEventHandler(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithLists(&appSetList).Build()
 
 			handler := &clusterSecretEventHandler{
-				Client: fakeClient,
-				Log:    log.WithField("type", "createSecretEventHandler"),
+				Client:                   fakeClient,
+				Log:                      log.WithField("type", "createSecretEventHandler"),
+				ApplicationSetNamespaces: []string{"argocd"},
 			}
 
 			mockAddRateLimitingInterface := mockAddRateLimitingInterface{}
@@ -554,15 +592,6 @@ func TestClusterEventHandler(t *testing.T) {
 			assert.ElementsMatch(t, mockAddRateLimitingInterface.addedItems, test.expectedRequests)
 		})
 	}
-}
-
-// Add checks the type, and adds it to the internal list of received additions
-func (obj *mockAddRateLimitingInterface) Add(item reconcile.Request) {
-	obj.addedItems = append(obj.addedItems, item)
-}
-
-type mockAddRateLimitingInterface struct {
-	addedItems []reconcile.Request
 }
 
 func TestNestedGeneratorHasClusterGenerator_NestedClusterGenerator(t *testing.T) {

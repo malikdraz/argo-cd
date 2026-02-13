@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/argoproj/gitops-engine/pkg/utils/text"
+	"github.com/argoproj/argo-cd/gitops-engine/pkg/utils/text"
 	"github.com/go-git/go-git/v5/plumbing"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -20,6 +20,7 @@ import (
 	"github.com/argoproj/argo-cd/v3/reposerver/apiclient"
 	cacheutil "github.com/argoproj/argo-cd/v3/util/cache"
 	"github.com/argoproj/argo-cd/v3/util/env"
+	"github.com/argoproj/argo-cd/v3/util/git"
 	"github.com/argoproj/argo-cd/v3/util/hash"
 )
 
@@ -41,6 +42,19 @@ type ClusterRuntimeInfo interface {
 	GetApiVersions() []string
 	// GetKubeVersion returns cluster API version
 	GetKubeVersion() string
+}
+
+// CachedManifestResponse represents a cached result of a previous manifest generation operation, including the caching
+// of a manifest generation error, plus additional information on previous failures
+type CachedManifestResponse struct {
+	// NOTE: When adding fields to this struct, you MUST also update shallowCopy()
+
+	CacheEntryHash                  string                      `json:"cacheEntryHash"`
+	ManifestResponse                *apiclient.ManifestResponse `json:"manifestResponse"`
+	MostRecentError                 string                      `json:"mostRecentError"`
+	FirstFailureTimestamp           int64                       `json:"firstFailureTimestamp"`
+	NumberOfConsecutiveFailures     int                         `json:"numberOfConsecutiveFailures"`
+	NumberOfCachedResponsesReturned int                         `json:"numberOfCachedResponsesReturned"`
 }
 
 func NewCache(cache *cacheutil.Cache, repoCacheExpiration time.Duration, revisionCacheExpiration time.Duration, revisionCacheLockTimeout time.Duration) *Cache {
@@ -85,9 +99,12 @@ func refTargetForCacheKeyFromRefTarget(refTarget *appv1.RefTarget) refTargetForC
 
 type refTargetRevisionMappingForCacheKey map[string]refTargetForCacheKey
 
-func getRefTargetRevisionMappingForCacheKey(refTargetRevisionMapping appv1.RefTargetRevisionMapping) refTargetRevisionMappingForCacheKey {
+func getRefTargetRevisionMappingForCacheKey(refTargetRevisionMapping appv1.RefTargetRevisionMapping, refSourceCommitSHAs ResolvedRevisions) refTargetRevisionMappingForCacheKey {
 	res := make(refTargetRevisionMappingForCacheKey)
+
 	for k, v := range refTargetRevisionMapping {
+		// forcefully update TargetRevision based on refSourceCommitSHAs so that the resolved revision is always stored in the cache
+		v.TargetRevision = refSourceCommitSHAs[git.NormalizeGitURL(v.Repo.Repo)]
 		res[k] = refTargetForCacheKeyFromRefTarget(v)
 	}
 	return res
@@ -116,7 +133,7 @@ func appSourceKeyJSON(appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRe
 	}
 	appSrcStr, _ := json.Marshal(appSourceKeyStruct{
 		AppSrc:            appSrc,
-		SrcRefs:           getRefTargetRevisionMappingForCacheKey(srcRefs),
+		SrcRefs:           getRefTargetRevisionMappingForCacheKey(srcRefs, refSourceCommitSHAs),
 		ResolvedRevisions: refSourceCommitSHAs,
 	})
 	return string(appSrcStr)
@@ -134,9 +151,7 @@ func clusterRuntimeInfoKey(info ClusterRuntimeInfo) uint32 {
 // check if info is nil, the caller must do that.
 func clusterRuntimeInfoKeyUnhashed(info ClusterRuntimeInfo) string {
 	apiVersions := info.GetApiVersions()
-	sort.Slice(apiVersions, func(i, j int) bool {
-		return apiVersions[i] < apiVersions[j]
-	})
+	slices.Sort(apiVersions)
 	return info.GetKubeVersion() + "|" + strings.Join(apiVersions, ",")
 }
 
@@ -164,6 +179,10 @@ func helmIndexRefsKey(repo string) string {
 	return "helm-index|" + repo
 }
 
+func ociTagsKey(repo string) string {
+	return "oci-tags|" + repo
+}
+
 // SetHelmIndex stores helm repository index.yaml content to cache
 func (c *Cache) SetHelmIndex(repo string, indexData []byte) error {
 	if indexData == nil {
@@ -179,6 +198,23 @@ func (c *Cache) SetHelmIndex(repo string, indexData []byte) error {
 // GetHelmIndex retrieves helm repository index.yaml content from cache
 func (c *Cache) GetHelmIndex(repo string, indexData *[]byte) error {
 	return c.cache.GetItem(helmIndexRefsKey(repo), indexData)
+}
+
+// SetOCITags stores oci image tags to cache
+func (c *Cache) SetOCITags(repo string, indexData []byte) error {
+	if indexData == nil {
+		// Logged as warning upstream
+		return errors.New("oci index data is nil, skipping cache")
+	}
+	return c.cache.SetItem(
+		ociTagsKey(repo),
+		indexData,
+		&cacheutil.CacheActionOpts{Expiration: c.revisionCacheExpiration})
+}
+
+// GetOCITags retrieves oci image tags from cache
+func (c *Cache) GetOCITags(repo string, indexData *[]byte) error {
+	return c.cache.GetItem(ociTagsKey(repo), indexData)
 }
 
 func gitRefsKey(repo string) string {
@@ -294,6 +330,7 @@ func manifestCacheKey(revision string, appSrc *appv1.ApplicationSource, srcRefs 
 	//       example, revision could be part of ResolvedRevisions. And srcRefs is probably redundant now that
 	//       refSourceCommitSHAs has been added. We don't need to know the _target_ revisions of the referenced sources
 	//       when the _resolved_ revisions are already part of the key.
+
 	trackingKey := trackingKey(appLabelKey, trackingMethod)
 	key := fmt.Sprintf("mfst|%s|%s|%s|%s|%d", trackingKey, appName, revision, namespace, appSourceKey(appSrc, srcRefs, refSourceCommitSHAs)+clusterRuntimeInfoKey(info))
 	if installationID != "" {
@@ -326,9 +363,9 @@ func LogDebugManifestCacheKeyFields(message string, reason string, revision stri
 	}
 }
 
-func (c *Cache) SetNewRevisionManifests(newRevision string, revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, clusterInfo ClusterRuntimeInfo, namespace string, trackingMethod string, appLabelKey string, appName string, refSourceCommitSHAs ResolvedRevisions, installationID string) error {
-	oldKey := manifestCacheKey(revision, appSrc, srcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, refSourceCommitSHAs, installationID)
-	newKey := manifestCacheKey(newRevision, appSrc, srcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, refSourceCommitSHAs, installationID)
+func (c *Cache) SetNewRevisionManifests(newRevision string, revision string, appSrc *appv1.ApplicationSource, oldSrcRefs appv1.RefTargetRevisionMapping, newSrcRefs appv1.RefTargetRevisionMapping, clusterInfo ClusterRuntimeInfo, namespace string, trackingMethod string, appLabelKey string, appName string, oldRefSourceCommitSHAs ResolvedRevisions, newRefSourceCommitSHAs ResolvedRevisions, installationID string) error {
+	oldKey := manifestCacheKey(revision, appSrc, oldSrcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, oldRefSourceCommitSHAs, installationID)
+	newKey := manifestCacheKey(newRevision, appSrc, newSrcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, newRefSourceCommitSHAs, installationID)
 	return c.cache.RenameItem(oldKey, newKey, c.repoCacheExpiration)
 }
 
@@ -462,7 +499,8 @@ func (c *Cache) SetGitFiles(repoURL, revision, pattern string, files map[string]
 
 func (c *Cache) GetGitFiles(repoURL, revision, pattern string) (map[string][]byte, error) {
 	var item map[string][]byte
-	return item, c.cache.GetItem(gitFilesKey(repoURL, revision, pattern), &item)
+	err := c.cache.GetItem(gitFilesKey(repoURL, revision, pattern), &item)
+	return item, err
 }
 
 func gitDirectoriesKey(repoURL, revision string) string {
@@ -478,7 +516,8 @@ func (c *Cache) SetGitDirectories(repoURL, revision string, directories []string
 
 func (c *Cache) GetGitDirectories(repoURL, revision string) ([]string, error) {
 	var item []string
-	return item, c.cache.GetItem(gitDirectoriesKey(repoURL, revision), &item)
+	err := c.cache.GetItem(gitDirectoriesKey(repoURL, revision), &item)
+	return item, err
 }
 
 func (cmr *CachedManifestResponse) shallowCopy() *CachedManifestResponse {
@@ -498,11 +537,11 @@ func (cmr *CachedManifestResponse) shallowCopy() *CachedManifestResponse {
 
 func (cmr *CachedManifestResponse) generateCacheEntryHash() (string, error) {
 	// Copy, then remove the old hash
-	copy := cmr.shallowCopy()
-	copy.CacheEntryHash = ""
+	shallowCopy := cmr.shallowCopy()
+	shallowCopy.CacheEntryHash = ""
 
 	// Hash the JSON representation into a base-64-encoded FNV 64a (we don't need a cryptographic hash algorithm, since this is only for detecting data corruption)
-	bytes, err := json.Marshal(copy)
+	bytes, err := json.Marshal(shallowCopy)
 	if err != nil {
 		return "", err
 	}
@@ -513,17 +552,4 @@ func (cmr *CachedManifestResponse) generateCacheEntryHash() (string, error) {
 	}
 	fnvHash := h.Sum(nil)
 	return base64.URLEncoding.EncodeToString(fnvHash), nil
-}
-
-// CachedManifestResponse represents a cached result of a previous manifest generation operation, including the caching
-// of a manifest generation error, plus additional information on previous failures
-type CachedManifestResponse struct {
-	// NOTE: When adding fields to this struct, you MUST also update shallowCopy()
-
-	CacheEntryHash                  string                      `json:"cacheEntryHash"`
-	ManifestResponse                *apiclient.ManifestResponse `json:"manifestResponse"`
-	MostRecentError                 string                      `json:"mostRecentError"`
-	FirstFailureTimestamp           int64                       `json:"firstFailureTimestamp"`
-	NumberOfConsecutiveFailures     int                         `json:"numberOfConsecutiveFailures"`
-	NumberOfCachedResponsesReturned int                         `json:"numberOfCachedResponsesReturned"`
 }

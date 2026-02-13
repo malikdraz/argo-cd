@@ -7,16 +7,16 @@ import (
 	"io"
 	"os"
 
-	"github.com/argoproj/gitops-engine/pkg/utils/kube"
+	"github.com/argoproj/argo-cd/gitops-engine/pkg/utils/kube"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
 
-	ioutil "github.com/argoproj/argo-cd/v3/util/io"
+	utilio "github.com/argoproj/argo-cd/v3/util/io"
 )
 
 func getOutWriter(inline bool, filePath string) (io.Writer, io.Closer, error) {
 	if !inline {
-		return os.Stdout, ioutil.NopCloser, nil
+		return os.Stdout, utilio.NopCloser, nil
 	}
 
 	if filePath == "" {

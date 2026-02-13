@@ -33,7 +33,8 @@ import (
 	"github.com/argoproj/argo-cd/v3/util/errors"
 	"github.com/argoproj/argo-cd/v3/util/gpg"
 	"github.com/argoproj/argo-cd/v3/util/healthz"
-	ioutil "github.com/argoproj/argo-cd/v3/util/io"
+	utilio "github.com/argoproj/argo-cd/v3/util/io"
+	"github.com/argoproj/argo-cd/v3/util/profile"
 	"github.com/argoproj/argo-cd/v3/util/tls"
 	traceutil "github.com/argoproj/argo-cd/v3/util/trace"
 )
@@ -49,34 +50,39 @@ var (
 	pauseGenerationOnFailureForMinutes           = env.ParseNumFromEnv(common.EnvPauseGenerationMinutes, 60, 0, math.MaxInt32)
 	pauseGenerationOnFailureForRequests          = env.ParseNumFromEnv(common.EnvPauseGenerationRequests, 0, 0, math.MaxInt32)
 	gitSubmoduleEnabled                          = env.ParseBoolFromEnv(common.EnvGitSubmoduleEnabled, true)
+	helmUserAgent                                = env.StringFromEnv(common.EnvHelmUserAgent, "")
 )
 
 func NewCommand() *cobra.Command {
 	var (
-		parallelismLimit                  int64
-		listenPort                        int
-		listenHost                        string
-		metricsPort                       int
-		metricsHost                       string
-		otlpAddress                       string
-		otlpInsecure                      bool
-		otlpHeaders                       map[string]string
-		otlpAttrs                         []string
-		cacheSrc                          func() (*reposervercache.Cache, error)
-		tlsConfigCustomizer               tls.ConfigCustomizer
-		tlsConfigCustomizerSrc            func() (tls.ConfigCustomizer, error)
-		redisClient                       *redis.Client
-		disableTLS                        bool
-		maxCombinedDirectoryManifestsSize string
-		cmpTarExcludedGlobs               []string
-		allowOutOfBoundsSymlinks          bool
-		streamedManifestMaxTarSize        string
-		streamedManifestMaxExtractedSize  string
-		helmManifestMaxExtractedSize      string
-		helmRegistryMaxIndexSize          string
-		disableManifestMaxExtractedSize   bool
-		includeHiddenDirectories          bool
-		cmpUseManifestGeneratePaths       bool
+		parallelismLimit                   int64
+		listenPort                         int
+		listenHost                         string
+		metricsPort                        int
+		metricsHost                        string
+		otlpAddress                        string
+		otlpInsecure                       bool
+		otlpHeaders                        map[string]string
+		otlpAttrs                          []string
+		cacheSrc                           func() (*reposervercache.Cache, error)
+		tlsConfigCustomizer                tls.ConfigCustomizer
+		tlsConfigCustomizerSrc             func() (tls.ConfigCustomizer, error)
+		redisClient                        *redis.Client
+		disableTLS                         bool
+		maxCombinedDirectoryManifestsSize  string
+		cmpTarExcludedGlobs                []string
+		allowOutOfBoundsSymlinks           bool
+		streamedManifestMaxTarSize         string
+		streamedManifestMaxExtractedSize   string
+		helmManifestMaxExtractedSize       string
+		helmRegistryMaxIndexSize           string
+		ociManifestMaxExtractedSize        string
+		disableOCIManifestMaxExtractedSize bool
+		disableManifestMaxExtractedSize    bool
+		includeHiddenDirectories           bool
+		cmpUseManifestGeneratePaths        bool
+		ociMediaTypes                      []string
+		enableBuiltinGitConfig             bool
 	)
 	command := cobra.Command{
 		Use:               cliName,
@@ -125,6 +131,9 @@ func NewCommand() *cobra.Command {
 			helmManifestMaxExtractedSizeQuantity, err := resource.ParseQuantity(helmManifestMaxExtractedSize)
 			errors.CheckError(err)
 
+			ociManifestMaxExtractedSizeQuantity, err := resource.ParseQuantity(ociManifestMaxExtractedSize)
+			errors.CheckError(err)
+
 			helmRegistryMaxIndexSizeQuantity, err := resource.ParseQuantity(helmRegistryMaxIndexSize)
 			errors.CheckError(err)
 
@@ -144,8 +153,13 @@ func NewCommand() *cobra.Command {
 				StreamedManifestMaxTarSize:                   streamedManifestMaxTarSizeQuantity.ToDec().Value(),
 				HelmManifestMaxExtractedSize:                 helmManifestMaxExtractedSizeQuantity.ToDec().Value(),
 				HelmRegistryMaxIndexSize:                     helmRegistryMaxIndexSizeQuantity.ToDec().Value(),
+				OCIManifestMaxExtractedSize:                  ociManifestMaxExtractedSizeQuantity.ToDec().Value(),
+				DisableOCIManifestMaxExtractedSize:           disableOCIManifestMaxExtractedSize,
 				IncludeHiddenDirectories:                     includeHiddenDirectories,
 				CMPUseManifestGeneratePaths:                  cmpUseManifestGeneratePaths,
+				OCIMediaTypes:                                ociMediaTypes,
+				EnableBuiltinGitConfig:                       enableBuiltinGitConfig,
+				HelmUserAgent:                                helmUserAgent,
 			}, askPassServer)
 			errors.CheckError(err)
 
@@ -160,10 +174,12 @@ func NewCommand() *cobra.Command {
 			}
 
 			grpc := server.CreateGRPC()
-			listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", listenHost, listenPort))
+			lc := &net.ListenConfig{}
+			listener, err := lc.Listen(ctx, "tcp", fmt.Sprintf("%s:%d", listenHost, listenPort))
 			errors.CheckError(err)
 
-			healthz.ServeHealthCheck(http.DefaultServeMux, func(r *http.Request) error {
+			mux := http.NewServeMux()
+			healthz.ServeHealthCheck(mux, func(r *http.Request) error {
 				if val, ok := r.URL.Query()["full"]; ok && len(val) > 0 && val[0] == "true" {
 					// connect to itself to make sure repo server is able to serve connection
 					// used by liveness probe to auto restart repo server
@@ -172,7 +188,7 @@ func NewCommand() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					defer ioutil.Close(conn)
+					defer utilio.Close(conn)
 					client := grpc_health_v1.NewHealthClient(conn)
 					res, err := client.Check(r.Context(), &grpc_health_v1.HealthCheckRequest{})
 					if err != nil {
@@ -185,8 +201,9 @@ func NewCommand() *cobra.Command {
 				}
 				return nil
 			})
-			http.Handle("/metrics", metricsServer.GetHandler())
-			go func() { errors.CheckError(http.ListenAndServe(fmt.Sprintf("%s:%d", metricsHost, metricsPort), nil)) }()
+			mux.Handle("/metrics", metricsServer.GetHandler())
+			profile.RegisterProfiler(mux)
+			go func() { errors.CheckError(http.ListenAndServe(fmt.Sprintf("%s:%d", metricsHost, metricsPort), mux)) }()
 			go func() { errors.CheckError(askPassServer.Run()) }()
 
 			if gpg.IsGPGEnabled() {
@@ -211,13 +228,11 @@ func NewCommand() *cobra.Command {
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 			wg := sync.WaitGroup{}
-			wg.Add(1)
-			go func() {
+			wg.Go(func() {
 				s := <-sigCh
 				log.Printf("got signal %v, attempting graceful shutdown", s)
 				grpc.GracefulStop()
-				wg.Done()
-			}()
+			})
 
 			log.Println("starting grpc server")
 			err = grpc.Serve(listener)
@@ -249,9 +264,13 @@ func NewCommand() *cobra.Command {
 	command.Flags().StringVar(&streamedManifestMaxExtractedSize, "streamed-manifest-max-extracted-size", env.StringFromEnv("ARGOCD_REPO_SERVER_STREAMED_MANIFEST_MAX_EXTRACTED_SIZE", "1G"), "Maximum size of streamed manifest archives when extracted")
 	command.Flags().StringVar(&helmManifestMaxExtractedSize, "helm-manifest-max-extracted-size", env.StringFromEnv("ARGOCD_REPO_SERVER_HELM_MANIFEST_MAX_EXTRACTED_SIZE", "1G"), "Maximum size of helm manifest archives when extracted")
 	command.Flags().StringVar(&helmRegistryMaxIndexSize, "helm-registry-max-index-size", env.StringFromEnv("ARGOCD_REPO_SERVER_HELM_MANIFEST_MAX_INDEX_SIZE", "1G"), "Maximum size of registry index file")
+	command.Flags().StringVar(&ociManifestMaxExtractedSize, "oci-manifest-max-extracted-size", env.StringFromEnv("ARGOCD_REPO_SERVER_OCI_MANIFEST_MAX_EXTRACTED_SIZE", "1G"), "Maximum size of oci manifest archives when extracted")
+	command.Flags().BoolVar(&disableOCIManifestMaxExtractedSize, "disable-oci-manifest-max-extracted-size", env.ParseBoolFromEnv("ARGOCD_REPO_SERVER_DISABLE_OCI_MANIFEST_MAX_EXTRACTED_SIZE", false), "Disable maximum size of oci manifest archives when extracted")
 	command.Flags().BoolVar(&disableManifestMaxExtractedSize, "disable-helm-manifest-max-extracted-size", env.ParseBoolFromEnv("ARGOCD_REPO_SERVER_DISABLE_HELM_MANIFEST_MAX_EXTRACTED_SIZE", false), "Disable maximum size of helm manifest archives when extracted")
 	command.Flags().BoolVar(&includeHiddenDirectories, "include-hidden-directories", env.ParseBoolFromEnv("ARGOCD_REPO_SERVER_INCLUDE_HIDDEN_DIRECTORIES", false), "Include hidden directories from Git")
 	command.Flags().BoolVar(&cmpUseManifestGeneratePaths, "plugin-use-manifest-generate-paths", env.ParseBoolFromEnv("ARGOCD_REPO_SERVER_PLUGIN_USE_MANIFEST_GENERATE_PATHS", false), "Pass the resources described in argocd.argoproj.io/manifest-generate-paths value to the cmpserver to generate the application manifests.")
+	command.Flags().StringSliceVar(&ociMediaTypes, "oci-layer-media-types", env.StringsFromEnv("ARGOCD_REPO_SERVER_OCI_LAYER_MEDIA_TYPES", []string{"application/vnd.oci.image.layer.v1.tar", "application/vnd.oci.image.layer.v1.tar+gzip", "application/vnd.cncf.helm.chart.content.v1.tar+gzip"}, ","), "Comma separated list of allowed media types for OCI media types. This only accounts for media types within layers.")
+	command.Flags().BoolVar(&enableBuiltinGitConfig, "enable-builtin-git-config", env.ParseBoolFromEnv("ARGOCD_REPO_SERVER_ENABLE_BUILTIN_GIT_CONFIG", true), "Enable builtin git configuration options that are required for correct argocd-repo-server operation.")
 	tlsConfigCustomizerSrc = tls.AddTLSFlagsToCmd(&command)
 	cacheSrc = reposervercache.AddCacheFlagsToCmd(&command, cacheutil.Options{
 		OnClientCreated: func(client *redis.Client) {

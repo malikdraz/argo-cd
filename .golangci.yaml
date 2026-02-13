@@ -16,15 +16,20 @@ issues:
 linters:
   enable:
     - errorlint
+    - exptostd
     - gocritic
     - gomodguard
+    - govet
     - importas
     - misspell
+    - modernize
+    - noctx
     - perfsprint
     - revive
     - staticcheck
     - testifylint
     - thelper
+    - tparallel
     - unparam
     - usestdlibvars
     - usetesting
@@ -46,12 +51,22 @@ linters:
 
   settings:
     gocritic:
+      enable-all: true
+      # Most of these should probably be enabled one-by-one.
       disabled-checks:
         - appendAssign
-        - assignOp
+        - appendCombine # Leave disabled, multi-line assigns can be more readable.
+        - assignOp # Leave disabled, assign operations can be more confusing than helpful.
+        - commentedOutCode
+        - deferInLoop
         - exitAfterDefer
-        - mapKey
-        - typeSwitchVar
+        - hugeParam
+        - importShadow
+        - paramTypeCombine # Leave disabled, there are too many failures to be worth fixing.
+        - rangeValCopy
+        - tooManyResultsChecker
+        - unnamedResult
+        - whyNoLint
 
     gomodguard:
       blocked:
@@ -68,6 +83,12 @@ linters:
           - github.com/pkg/errors:
               recommendations:
                 - errors
+
+    govet:
+      disable:
+        - fieldalignment
+        - shadow
+      enable-all: true
 
     importas:
       alias:
@@ -97,6 +118,16 @@ linters:
 
         - pkg: errors
           alias: stderrors
+
+        - pkg: github.com/argoproj/argo-cd/v3/util/io
+          alias: utilio
+
+    modernize:
+      disable:
+        # Suggest replacing omitempty with omitzero for struct fields.
+        - omitzero
+        # Simplify code by using go1.26's new(expr). - generates lots of false positives.
+        - newexpr
 
     nolintlint:
       require-specific: true
@@ -216,6 +247,10 @@ linters:
 
       disable:
         - go-require
+
+    unused:
+      field-writes-are-uses: false
+      exported-fields-are-used: false
 
     usetesting:
       os-mkdir-temp: false
